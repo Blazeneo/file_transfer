@@ -8,8 +8,8 @@ const io = new Server(server, {
     cors: { origin: "*" },
 });
 
-app.get('/send',(req,res)=>{
-    res.sendFile(__dirname+'/sender.html');
+app.get('/',(req,res)=>{
+    res.sendFile(__dirname+'/home.html');
 
 })
 app.get('/res',(req,res)=>{
