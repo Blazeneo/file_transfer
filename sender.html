@@ -11,7 +11,8 @@
     <p id="status">Waiting for connection...</p>
 
     <script>
-        const socket = io("http://localhost:3000");
+        const socket = io("https://file-transfer-mfru.onrender.com/", { transports: ["websocket"] });
+
         const peerConnection = new RTCPeerConnection();
         let dataChannel;
 
