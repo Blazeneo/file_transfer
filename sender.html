@@ -1,128 +1,130 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <title>Sender</title>
-    <script src="https://cdn.socket.io/4.0.1/socket.io.min.js"></script>
-</head>
-<body>
-    <h2>Send a File</h2>
-    <input type="file" id="fileInput">
-    <button onclick="sendFile()">Send File</button>
-    <p id="status">Waiting for connection...</p>
+<script>
+    const socket = io("https://file-transfer-mfru.onrender.com/", { transports: ["websocket"] });
 
-    <script>
-        const socket = io("https://file-transfer-mfru.onrender.com/", { transports: ["websocket"] });
-        const peerConnection = new RTCPeerConnection();
-        let dataChannel;
-        let pendingCandidates = [];
-
-        function createDataChannel() {
-            dataChannel = peerConnection.createDataChannel("fileTransfer");
-
-            dataChannel.onopen = () => {
-                console.log("✅ Data channel is open!");
-                document.getElementById("status").innerText = "Connected! Ready to send file.";
-            };
-
-            dataChannel.onclose = () => {
-                console.log("⚠ Data channel closed.");
-                document.getElementById("status").innerText = "Connection lost.";
-            };
-        }
-
-        async function startConnection() {
-            createDataChannel();
-            const offer = await peerConnection.createOffer();
-            await peerConnection.setLocalDescription(offer);
-            socket.emit("offer", offer);
-        }
-
-        socket.on("answer", async (data) => {
-            if (peerConnection.signalingState !== "stable") {
-                console.warn("⚠ Ignoring answer because the connection is not stable.");
-                return;
+    const peerConnection = new RTCPeerConnection({
+        iceServers: [
+            { urls: "stun:stun.l.google.com:19302" },
+            { 
+                urls: "turn:relay1.expressturn.com:3478", 
+                username: "expressturn", 
+                credential: "somepassword"
             }
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(data));
+        ]
+    });
 
-            // Process any ICE candidates received before the answer
-            while (pendingCandidates.length > 0) {
-                let candidate = pendingCandidates.shift();
-                await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-            }
-        });
+    let dataChannel;
+    let pendingCandidates = [];
 
-        socket.on("candidate", async (candidate) => {
-            if (!peerConnection.remoteDescription) {
-                console.warn("⚠ ICE candidate received before remote description was set. Storing.");
-                pendingCandidates.push(candidate);
-                return;
-            }
-            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-        });
+    function createDataChannel() {
+        dataChannel = peerConnection.createDataChannel("fileTransfer");
 
-        peerConnection.onicecandidate = (event) => {
-            if (event.candidate) {
-                socket.emit("candidate", event.candidate);
-            }
+        dataChannel.onopen = () => {
+            console.log("✅ Data channel is open!");
+            document.getElementById("status").innerText = "Connected! Ready to send file.";
         };
 
-        async function sendFile() {
-            if (!dataChannel || dataChannel.readyState !== "open") {
-                alert("⚠ Data channel is not ready yet! Please wait.");
-                return;
-            }
+        dataChannel.onclose = () => {
+            console.log("⚠ Data channel closed.");
+            document.getElementById("status").innerText = "Connection lost.";
+        };
+    }
 
-            const file = document.getElementById("fileInput").files[0];
-            if (!file) {
-                alert("Select a file first!");
-                return;
-            }
+    async function startConnection() {
+        createDataChannel();
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+        socket.emit("offer", offer);
+    }
 
-            document.getElementById("status").innerText = "Sending...";
-            console.log(`📤 Sending file: ${file.name} (${file.size} bytes)`);
-
-            dataChannel.send(JSON.stringify({ type: "file-info", size: file.size }));
-
-            const chunkSize = 256 * 1024; // 256 KB
-            let offset = 0;
-
-            function sendChunk() {
-                if (offset >= file.size) {
-                    dataChannel.send("EOF");
-                    console.log("✅ File transfer complete!");
-                    document.getElementById("status").innerText = "File Sent!";
-                    return;
-                }
-
-                const reader = new FileReader();
-                reader.onload = () => {
-                    if (dataChannel.readyState === "open") {
-                        if (dataChannel.bufferedAmount > 0) {
-                            console.log("⏳ Buffer is full, waiting...");
-                            setTimeout(sendChunk, 100);
-                            return;
-                        }
-
-                        dataChannel.send(reader.result);
-                        offset += chunkSize;
-
-                        const progress = ((offset / file.size) * 100).toFixed(2);
-                        console.log(`📊 Sending progress: ${progress}%`);
-                        document.getElementById("status").innerText = `Sending: ${progress}%`;
-
-                        sendChunk();
-                    } else {
-                        console.log("⚠ Data channel closed unexpectedly.");
-                    }
-                };
-
-                reader.readAsArrayBuffer(file.slice(offset, offset + chunkSize));
-            }
-
-            sendChunk();
+    // 🔹 Handle answer from receiver
+    socket.on("answer", async (data) => {
+        if (peerConnection.signalingState !== "have-local-offer") {
+            console.warn("⚠ Ignoring answer because the connection is not stable.");
+            setTimeout(() => socket.emit("answer", data), 500); // 🔹 Retry later
+            return;
         }
 
-        startConnection();
-    </script>
-</body>
-</html>
+        console.log("✅ Answer received. Setting remote description...");
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(data));
+
+        // Apply any pending ICE candidates
+        while (pendingCandidates.length > 0) {
+            let candidate = pendingCandidates.shift();
+            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+        }
+    });
+
+    // 🔹 Handle ICE candidates
+    socket.on("candidate", async (candidate) => {
+        if (!peerConnection.remoteDescription) {
+            console.warn("⚠ ICE candidate received before remote description was set. Storing.");
+            pendingCandidates.push(candidate);
+            return;
+        }
+        await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+    });
+
+    peerConnection.onicecandidate = (event) => {
+        if (event.candidate) {
+            socket.emit("candidate", event.candidate);
+        }
+    };
+
+    async function sendFile() {
+        if (!dataChannel || dataChannel.readyState !== "open") {
+            alert("⚠ Data channel is not ready yet! Please wait.");
+            return;
+        }
+
+        const file = document.getElementById("fileInput").files[0];
+        if (!file) {
+            alert("Select a file first!");
+            return;
+        }
+
+        document.getElementById("status").innerText = "Sending...";
+        console.log(`📤 Sending file: ${file.name} (${file.size} bytes)`);
+
+        dataChannel.send(JSON.stringify({ type: "file-info", size: file.size }));
+
+        const chunkSize = 256 * 1024; // 256 KB
+        let offset = 0;
+
+        function sendChunk() {
+            if (offset >= file.size) {
+                dataChannel.send("EOF");
+                console.log("✅ File transfer complete!");
+                document.getElementById("status").innerText = "File Sent!";
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = () => {
+                if (dataChannel.readyState === "open") {
+                    if (dataChannel.bufferedAmount > 0) {
+                        console.log("⏳ Buffer is full, waiting...");
+                        setTimeout(sendChunk, 100);
+                        return;
+                    }
+
+                    dataChannel.send(reader.result);
+                    offset += chunkSize;
+
+                    const progress = ((offset / file.size) * 100).toFixed(2);
+                    console.log(`📊 Sending progress: ${progress}%`);
+                    document.getElementById("status").innerText = `Sending: ${progress}%`;
+
+                    sendChunk();
+                } else {
+                    console.log("⚠ Data channel closed unexpectedly.");
+                }
+            };
+
+            reader.readAsArrayBuffer(file.slice(offset, offset + chunkSize));
+        }
+
+        sendChunk();
+    }
+
+    startConnection();
+</script>
