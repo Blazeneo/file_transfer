@@ -12,9 +12,9 @@
 
     <script>
         const socket = io("https://file-transfer-mfru.onrender.com/", { transports: ["websocket"] });
-
         const peerConnection = new RTCPeerConnection();
         let dataChannel;
+        let pendingCandidates = [];
 
         function createDataChannel() {
             dataChannel = peerConnection.createDataChannel("fileTransfer");
@@ -37,21 +37,27 @@
             socket.emit("offer", offer);
         }
 
-        // socket.on("answer", async (data) => {
-        //     await peerConnection.setRemoteDescription(new RTCSessionDescription(data));
-        // });
-
-
         socket.on("answer", async (data) => {
             if (peerConnection.signalingState !== "stable") {
-          console.warn("⚠ Ignoring answer because the connection is not stable.");
+                console.warn("⚠ Ignoring answer because the connection is not stable.");
                 return;
-                     }
-              await peerConnection.setRemoteDescription(new RTCSessionDescription(data));
-                                                });
+            }
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(data));
 
-        socket.on("candidate", (candidate) => {
-            peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+            // Process any ICE candidates received before the answer
+            while (pendingCandidates.length > 0) {
+                let candidate = pendingCandidates.shift();
+                await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+            }
+        });
+
+        socket.on("candidate", async (candidate) => {
+            if (!peerConnection.remoteDescription) {
+                console.warn("⚠ ICE candidate received before remote description was set. Storing.");
+                pendingCandidates.push(candidate);
+                return;
+            }
+            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
         });
 
         peerConnection.onicecandidate = (event) => {
@@ -77,42 +83,41 @@
 
             dataChannel.send(JSON.stringify({ type: "file-info", size: file.size }));
 
-            const chunkSize = 256 * 1024; // 16 KB
+            const chunkSize = 256 * 1024; // 256 KB
             let offset = 0;
 
             function sendChunk() {
-    if (offset >= file.size) {
-        dataChannel.send("EOF");
-        console.log("✅ File transfer complete!");
-        document.getElementById("status").innerText = "File Sent!";
-        return;
-    }
+                if (offset >= file.size) {
+                    dataChannel.send("EOF");
+                    console.log("✅ File transfer complete!");
+                    document.getElementById("status").innerText = "File Sent!";
+                    return;
+                }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-        if (dataChannel.readyState === "open") {
-            // Wait for the buffer to clear before sending
-            if (dataChannel.bufferedAmount > 0) {
-                console.log("⏳ Buffer is full, waiting...");
-                setTimeout(sendChunk, 100); // Wait and retry
-                return;
+                const reader = new FileReader();
+                reader.onload = () => {
+                    if (dataChannel.readyState === "open") {
+                        if (dataChannel.bufferedAmount > 0) {
+                            console.log("⏳ Buffer is full, waiting...");
+                            setTimeout(sendChunk, 100);
+                            return;
+                        }
+
+                        dataChannel.send(reader.result);
+                        offset += chunkSize;
+
+                        const progress = ((offset / file.size) * 100).toFixed(2);
+                        console.log(`📊 Sending progress: ${progress}%`);
+                        document.getElementById("status").innerText = `Sending: ${progress}%`;
+
+                        sendChunk();
+                    } else {
+                        console.log("⚠ Data channel closed unexpectedly.");
+                    }
+                };
+
+                reader.readAsArrayBuffer(file.slice(offset, offset + chunkSize));
             }
-
-            dataChannel.send(reader.result);
-            offset += chunkSize;
-
-            const progress = ((offset / file.size) * 100).toFixed(2);
-            console.log(`📊 Sending progress: ${progress}%`);
-            document.getElementById("status").innerText = `Sending: ${progress}%`;
-
-            sendChunk();
-        } else {
-            console.log("⚠ Data channel closed unexpectedly.");
-        }
-    };
-
-    reader.readAsArrayBuffer(file.slice(offset, offset + chunkSize));
-}
 
             sendChunk();
         }
