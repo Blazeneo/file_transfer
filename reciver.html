@@ -75,9 +75,12 @@
         // 🔹 Handle offer from sender
         socket.on("offer", async (data) => {
             if (peerConnection.signalingState !== "stable") {
-                console.warn("⚠ Ignoring offer because the connection is not stable.");
+                console.warn("⚠ Connection is unstable. Waiting...");
+                setTimeout(() => socket.emit("offer", data), 500);  // 🔹 Wait and retry
                 return;
             }
+
+            console.log("✅ Offer received. Setting remote description...");
             await peerConnection.setRemoteDescription(new RTCSessionDescription(data));
 
             // Apply any pending ICE candidates
@@ -91,7 +94,7 @@
             socket.emit("answer", answer);
         });
 
-        // 🔹 Add ICE candidates properly
+        // 🔹 Handle ICE candidates
         socket.on("candidate", async (candidate) => {
             if (!peerConnection.remoteDescription) {
                 console.warn("⚠ ICE candidate received before remote description was set. Storing.");
