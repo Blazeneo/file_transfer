@@ -1,44 +1,51 @@
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
-
 const app = express();
-const path = require('path');
 const server = http.createServer(app);
-app.use(express.static(path.join(__dirname, 'public')));
-app.use(express.static(__dirname));
+const io = new Server(server);
 
-const io = new Server(server, {
-    cors: { origin: "*" },
-});
-app.get('/',(req,res)=>{
-    res.sendFile(path.join(__dirname+'/home.html'));
+app.use(express.static(__dirname)); // Serve static files (HTML, JS, etc.)
 
-})
-app.get('/send',(req,res)=>{
-    res.sendFile(path.join(__dirname+'/sender.html'));
+// Store active sessions
+const sessions = {};
 
-})
-app.get('/res',(req,res)=>{
-    res.sendFile(path.join(__dirname+'/reciver.html'));
-
-})
 io.on("connection", (socket) => {
-    console.log("A user connected:", socket.id);
+    let sessionId;
 
-    socket.on("offer", (data) => {
-        socket.broadcast.emit("offer", data);
+    socket.on("join-session", (id) => {
+        sessionId = id;
+        if (!sessions[sessionId]) sessions[sessionId] = [];
+        sessions[sessionId].push(socket);
+
+        if (sessions[sessionId].length === 2) {
+            // Notify both users they are ready
+            sessions[sessionId].forEach(s => s.emit("ready"));
+        }
     });
 
-    socket.on("answer", (data) => {
-        socket.broadcast.emit("answer", data);
+    socket.on("offer", (offer) => {
+        if (sessions[sessionId]?.length === 2) {
+            sessions[sessionId][1].emit("offer", offer);
+        }
     });
 
-    socket.on("candidate", (data) => {
-        socket.broadcast.emit("candidate", data);
+    socket.on("answer", (answer) => {
+        if (sessions[sessionId]?.length === 2) {
+            sessions[sessionId][0].emit("answer", answer);
+        }
+    });
+
+    socket.on("candidate", (candidate) => {
+        sessions[sessionId]?.forEach(s => s.emit("candidate", candidate));
+    });
+
+    socket.on("disconnect", () => {
+        if (sessions[sessionId]) {
+            sessions[sessionId] = sessions[sessionId].filter(s => s !== socket);
+            if (sessions[sessionId].length === 0) delete sessions[sessionId];
+        }
     });
 });
 
-server.listen(3000, () => {
-    console.log("Server running on 3000");
-});
+server.listen(3000, () => console.log("Server running on http://localhost:3000"));
