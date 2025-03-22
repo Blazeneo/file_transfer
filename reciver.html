@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Receiver</title>
+    <script src="https://cdn.socket.io/4.0.1/socket.io.min.js"></script>
+</head>
+<body>
+    <h2>Receive a File</h2>
+    <p id="status">Waiting for file...</p>
+    <progress id="progressBar" value="0" max="100"></progress>
+
+    <script>
+        const socket = io("http://localhost:3000");
+        const peerConnection = new RTCPeerConnection();
+        let dataChannel;
+        let receivedChunks = [];
+        let receivedSize = 0;
+        let totalFileSize = 0;
+
+        peerConnection.ondatachannel = (event) => {
+            dataChannel = event.channel;
+            
+            dataChannel.onopen = () => {
+                console.log("✅ Data channel is open on Receiver!");
+                document.getElementById("status").innerText = "Receiving file...";
+            };
+
+            dataChannel.onmessage = (event) => {
+                if (typeof event.data === "string" && event.data === "EOF") {
+                    const blob = new Blob(receivedChunks);
+                    const link = document.createElement("a");
+                    link.href = URL.createObjectURL(blob);
+                    link.download = "received_file";
+                    link.click();
+                    console.log("✅ File received and saved!");
+                    document.getElementById("status").innerText = "File received!";
+                    return;
+                }
+
+                if (typeof event.data === "string") {
+                    try {
+                        const message = JSON.parse(event.data);
+                        if (message.type === "file-info") {
+                            totalFileSize = message.size;
+                            console.log(`ℹ Receiving file of size: ${totalFileSize} bytes`);
+                        }
+                    } catch (e) {
+                        console.error("Error parsing message:", e);
+                    }
+                    return;
+                }
+
+                receivedChunks.push(event.data);
+                receivedSize += event.data.byteLength;
+
+                // 🔹 Show progress
+                const progress = ((receivedSize / totalFileSize) * 100).toFixed(2);
+                document.getElementById("progressBar").value = progress;
+                console.log(`📥 Receiving progress: ${progress}%`);
+            };
+        };
+
+        // 🔹 Handle offer from sender
+        socket.on("offer", async (data) => {
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(data));
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+            socket.emit("answer", answer);
+        });
+
+        // 🔹 Add ICE candidates
+        socket.on("candidate", (candidate) => {
+            peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+        });
+
+        peerConnection.onicecandidate = (event) => {
+            if (event.candidate) {
+                socket.emit("candidate", event.candidate);
+            }
+        };
+    </script>
+</body>
+</html>
