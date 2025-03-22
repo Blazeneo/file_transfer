@@ -3,11 +3,6 @@ const socket = io("https://file-transfer-mfru.onrender.com/", { transports: ["we
 const peerConnection = new RTCPeerConnection({
     iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
-        { 
-            urls: "turn:relay1.expressturn.com:3478", 
-            username: "expressturn", 
-            credential: "somepassword"
-        },
         {
             urls: "turn:openrelay.metered.ca:80",
             username: "openrelayproject",
@@ -15,6 +10,7 @@ const peerConnection = new RTCPeerConnection({
         }
     ]
 });
+
 
 let dataChannel;
 let pendingCandidates = [];
@@ -44,23 +40,21 @@ async function startConnection() {
 socket.on("answer", async (data) => {
     console.log("✅ Answer received. Waiting before setting remote description...");
 
-    setTimeout(async () => {
-        if (peerConnection.signalingState !== "have-local-offer") {
-            console.warn("⚠ Connection still unstable, ignoring answer.");
-            return;
-        }
+    // Check if we're in the correct state
+    if (peerConnection.signalingState !== "have-local-offer") {
+        console.warn("⚠ Connection still unstable, ignoring answer.");
+        return;
+    }
 
-        await peerConnection.setRemoteDescription(new RTCSessionDescription(data));
+    await peerConnection.setRemoteDescription(new RTCSessionDescription(data));
 
-        // Apply any pending ICE candidates
-        while (pendingCandidates.length > 0) {
-            let candidate = pendingCandidates.shift();
-            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-        }
-    }, 500); // Small delay before setting the answer
+    // Add stored ICE candidates
+    while (pendingCandidates.length > 0) {
+        let candidate = pendingCandidates.shift();
+        await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+    }
 });
 
-// 🔹 Handle ICE candidates
 socket.on("candidate", async (candidate) => {
     if (!peerConnection.remoteDescription) {
         console.warn("⚠ ICE candidate received before remote description was set. Storing.");
@@ -69,6 +63,7 @@ socket.on("candidate", async (candidate) => {
     }
     await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
 });
+
 
 peerConnection.onicecandidate = (event) => {
     if (event.candidate) {
