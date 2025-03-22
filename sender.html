@@ -37,9 +37,18 @@
             socket.emit("offer", offer);
         }
 
+        // socket.on("answer", async (data) => {
+        //     await peerConnection.setRemoteDescription(new RTCSessionDescription(data));
+        // });
+
+
         socket.on("answer", async (data) => {
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(data));
-        });
+            if (peerConnection.signalingState !== "stable") {
+          console.warn("⚠ Ignoring answer because the connection is not stable.");
+                return;
+                     }
+              await peerConnection.setRemoteDescription(new RTCSessionDescription(data));
+                                                });
 
         socket.on("candidate", (candidate) => {
             peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
