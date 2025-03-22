@@ -7,6 +7,11 @@ const peerConnection = new RTCPeerConnection({
             urls: "turn:relay1.expressturn.com:3478", 
             username: "expressturn", 
             credential: "somepassword"
+        },
+        {
+            urls: "turn:openrelay.metered.ca:80",
+            username: "openrelayproject",
+            credential: "openrelayproject"
         }
     ]
 });
@@ -35,21 +40,27 @@ async function startConnection() {
     socket.emit("offer", offer);
 }
 
+// 🔹 Handle answer from receiver with delay
 socket.on("answer", async (data) => {
-    if (peerConnection.signalingState !== "have-local-offer") {
-        console.warn("⚠ Ignoring answer because the connection is not stable.");
-        return;
-    }
+    console.log("✅ Answer received. Waiting before setting remote description...");
 
-    console.log("✅ Answer received. Setting remote description...");
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(data));
+    setTimeout(async () => {
+        if (peerConnection.signalingState !== "have-local-offer") {
+            console.warn("⚠ Connection still unstable, ignoring answer.");
+            return;
+        }
 
-    while (pendingCandidates.length > 0) {
-        let candidate = pendingCandidates.shift();
-        await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-    }
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(data));
+
+        // Apply any pending ICE candidates
+        while (pendingCandidates.length > 0) {
+            let candidate = pendingCandidates.shift();
+            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+        }
+    }, 500); // Small delay before setting the answer
 });
 
+// 🔹 Handle ICE candidates
 socket.on("candidate", async (candidate) => {
     if (!peerConnection.remoteDescription) {
         console.warn("⚠ ICE candidate received before remote description was set. Storing.");
